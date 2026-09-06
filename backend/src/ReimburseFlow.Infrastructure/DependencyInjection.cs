@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using ReimburseFlow.Application.Abstractions.Persistence;
 using ReimburseFlow.Infrastructure.Persistence;
+using ReimburseFlow.Infrastructure.Persistence.Repositories;
 
 namespace ReimburseFlow.Infrastructure;
 
@@ -16,6 +18,10 @@ public static class DependencyInjection
 
         services.AddDbContext<ReimburseFlowDbContext>(options =>
             options.UseSqlServer(connectionString));
+
+        services.AddScoped<IReimbursementRepository, ReimbursementRepository>();
+        services.AddScoped<IIdempotencyRepository, IdempotencyRepository>();
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         return services;
     }
