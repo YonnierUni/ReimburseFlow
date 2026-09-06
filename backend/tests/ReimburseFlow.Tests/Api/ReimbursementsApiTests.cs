@@ -50,6 +50,69 @@ public class ReimbursementsApiTests
         Assert.Contains("/api/reimbursements/", response.Headers.Location?.ToString());
     }
 
+    [Theory]
+    [MemberData(nameof(ValidCreateRequestMaxLengthCases))]
+    public async Task Create_WithExactMaxLengthContractFields_ReturnsCreated(object request)
+    {
+        using var factory = new ApiFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var response = await client.PostAsJsonAsync("/api/reimbursements", request);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidCreateRequestMaxLengthCases))]
+    public async Task Create_WithTooLongContractFields_ReturnsValidationProblemDetails(
+        string expectedField,
+        object request)
+    {
+        using var factory = new ApiFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var response = await client.PostAsJsonAsync("/api/reimbursements", request);
+        var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetailsResponse>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(400, problem?.Status);
+        Assert.False(string.IsNullOrWhiteSpace(problem?.TraceId));
+        Assert.NotNull(problem?.Errors);
+        Assert.Contains(expectedField, problem.Errors.Keys);
+    }
+
+    [Fact]
+    public async Task Create_WithZeroAmount_StillUsesDomainValidation()
+    {
+        using var factory = new ApiFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "zero-amount-key");
+
+        var response = await client.PostAsJsonAsync("/api/reimbursements", CreateRequest(amount: 0));
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetailsResponse>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(400, problem?.Status);
+        Assert.Equal("Amount must be greater than zero.", problem?.Detail);
+        Assert.False(string.IsNullOrWhiteSpace(problem?.TraceId));
+    }
+
+    [Fact]
+    public async Task Create_WithFutureExpenseDate_ReturnsCreated()
+    {
+        using var factory = new ApiFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "future-date-key");
+
+        var response = await client.PostAsJsonAsync(
+            "/api/reimbursements",
+            CreateRequest(expenseDate: "2099-01-01"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
     [Fact]
     public async Task GetById_Existing_ReturnsOk()
     {
@@ -162,6 +225,71 @@ public class ReimbursementsApiTests
     }
 
     [Fact]
+    public async Task Reject_WithExactMaxLengthReason_ReturnsOk()
+    {
+        using var factory = new ApiFactory();
+        var reimbursement = factory.Persistence.AddReimbursement();
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/reimbursements/{reimbursement.Id}/reject",
+            new { reason = new string('R', 1000) });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reject_WithTooLongReason_ReturnsValidationProblemDetails()
+    {
+        using var factory = new ApiFactory();
+        var reimbursement = factory.Persistence.AddReimbursement();
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/reimbursements/{reimbursement.Id}/reject",
+            new { reason = new string('R', 1001) });
+        var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetailsResponse>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(400, problem?.Status);
+        Assert.False(string.IsNullOrWhiteSpace(problem?.TraceId));
+        Assert.NotNull(problem?.Errors);
+        Assert.Contains("Reason", problem.Errors.Keys);
+    }
+
+    [Fact]
+    public async Task Approve_WhenAlreadyApproved_ReturnsConflictProblemDetails()
+    {
+        using var factory = new ApiFactory();
+        var reimbursement = factory.Persistence.AddReimbursement();
+        reimbursement.Approve();
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsync($"/api/reimbursements/{reimbursement.Id}/approve", null);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetailsResponse>();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(409, problem?.Status);
+    }
+
+    [Fact]
+    public async Task Reject_WhenAlreadyRejected_ReturnsConflictProblemDetails()
+    {
+        using var factory = new ApiFactory();
+        var reimbursement = factory.Persistence.AddReimbursement();
+        reimbursement.Reject("Already rejected.");
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/reimbursements/{reimbursement.Id}/reject",
+            new { reason = "Another reason" });
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetailsResponse>();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(409, problem?.Status);
+    }
+
+    [Fact]
     public async Task Conflict_ReturnsConflictProblemDetails()
     {
         using var factory = new ApiFactory
@@ -210,17 +338,41 @@ public class ReimbursementsApiTests
         Assert.DoesNotContain("secret database detail", problem);
     }
 
-    private static object CreateRequest() => new
+    public static IEnumerable<object[]> ValidCreateRequestMaxLengthCases()
     {
-        employeeId = "employee-api",
-        receiptNumber = "receipt-api",
-        expenseDate = "2026-09-05",
+        yield return [CreateRequest(employeeId: new string('E', 100), receiptNumber: "receipt-max-employee")];
+        yield return [CreateRequest(employeeId: "employee-max-receipt", receiptNumber: new string('R', 100))];
+        yield return [CreateRequest(employeeId: "employee-max-description", receiptNumber: "receipt-max-description", description: new string('D', 1000))];
+    }
+
+    public static IEnumerable<object[]> InvalidCreateRequestMaxLengthCases()
+    {
+        yield return ["EmployeeId", CreateRequest(employeeId: new string('E', 101), receiptNumber: "receipt-long-employee")];
+        yield return ["ReceiptNumber", CreateRequest(employeeId: "employee-long-receipt", receiptNumber: new string('R', 101))];
+        yield return ["Description", CreateRequest(employeeId: "employee-long-description", receiptNumber: "receipt-long-description", description: new string('D', 1001))];
+    }
+
+    private static object CreateRequest(
+        string employeeId = "employee-api",
+        string receiptNumber = "receipt-api",
+        string expenseDate = "2026-09-05",
+        string description = "Client lunch",
+        decimal amount = 25.50m) => new
+    {
+        employeeId,
+        receiptNumber,
+        expenseDate,
         category = "Food",
-        description = "Client lunch",
-        amount = 25.50m
+        description,
+        amount
     };
 
-    private sealed record ProblemDetailsResponse(int? Status, string? TraceId);
+    private sealed record ProblemDetailsResponse(int? Status, string? Detail, string? TraceId);
+
+    private sealed record ValidationProblemDetailsResponse(
+        int? Status,
+        string? TraceId,
+        Dictionary<string, string[]>? Errors);
 }
 
 public sealed class ApiFactory : WebApplicationFactory<global::Program>

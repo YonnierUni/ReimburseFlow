@@ -99,7 +99,7 @@ public sealed class Reimbursement
     {
         if (Status != ReimbursementStatus.Pending)
         {
-            throw new DomainException("Only pending reimbursements can change status.");
+            throw new InvalidStateTransitionException("Only pending reimbursements can change status.");
         }
     }
 }

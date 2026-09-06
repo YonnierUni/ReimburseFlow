@@ -8,6 +8,7 @@ using ReimburseFlow.Application.Reimbursements.Queries.GetById;
 using ReimburseFlow.Application.Reimbursements.Queries.GetList;
 using ReimburseFlow.Domain.Entities;
 using ReimburseFlow.Domain.Enums;
+using ReimburseFlow.Domain.Exceptions;
 using ReimburseFlow.Infrastructure.Persistence;
 
 namespace ReimburseFlow.Tests.Application;
@@ -189,7 +190,7 @@ public class ReimbursementApplicationTests
         var reimbursement = context.AddExisting();
         reimbursement.Approve();
 
-        await Assert.ThrowsAsync<ReimburseFlow.Domain.Exceptions.DomainException>(() =>
+        await Assert.ThrowsAsync<InvalidStateTransitionException>(() =>
             new ApproveReimbursementHandler(context, context)
                 .HandleAsync(new ApproveReimbursementCommand(reimbursement.Id)));
     }

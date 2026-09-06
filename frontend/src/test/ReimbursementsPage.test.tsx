@@ -136,7 +136,7 @@ describe('ReimbursementsPage', () => {
   it('clears action errors when a new action starts and after it succeeds', async () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse([reimbursement]))
-      .mockImplementationOnce(() => jsonResponse({ detail: 'Approval failed.', status: 409 }, 409))
+      .mockImplementationOnce(() => jsonResponse({ detail: 'Approval failed.', status: 500 }, 500))
       .mockImplementationOnce(() => jsonResponse({ ...reimbursement, status: 'Approved' }))
       .mockImplementationOnce(() => jsonResponse([{ ...reimbursement, status: 'Approved' }]))
     vi.stubGlobal('fetch', fetchMock)
@@ -147,6 +147,81 @@ describe('ReimbursementsPage', () => {
     expect(await screen.findByText('Approval failed.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
     await waitFor(() => expect(screen.queryByText('Approval failed.')).not.toBeInTheDocument())
+  })
+
+  it('refreshes after an approve conflict and hides stale pending actions when the server has approved it', async () => {
+    const approved = { ...reimbursement, status: 'Approved' }
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse([reimbursement]))
+      .mockImplementationOnce(() => jsonResponse({ detail: 'Only pending reimbursements can change status.', status: 409 }, 409))
+      .mockImplementationOnce(() => jsonResponse([approved]))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    await screen.findByText('employee-1')
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
+
+    expect(await screen.findByText('Only pending reimbursements can change status.')).toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(screen.getAllByText('Approved')).toHaveLength(2)
+  })
+
+  it('refreshes after a reject conflict and hides stale pending actions when the server has rejected it', async () => {
+    const rejected = { ...reimbursement, status: 'Rejected', rejectionReason: 'Already rejected elsewhere' }
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse([reimbursement]))
+      .mockImplementationOnce(() => jsonResponse({ detail: 'Only pending reimbursements can change status.', status: 409 }, 409))
+      .mockImplementationOnce(() => jsonResponse([rejected]))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    await screen.findByText('employee-1')
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'Unreadable receipt')
+    await userEvent.click(screen.getByRole('button', { name: 'Reject reimbursement' }))
+
+    expect(await screen.findByText('Only pending reimbursements can change status.')).toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(screen.queryByRole('dialog', { name: 'Reject reimbursement' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(screen.getAllByText('Rejected')).toHaveLength(2)
+  })
+
+  it('keeps row actions disabled during an action and prevents duplicate approval submits', async () => {
+    const approved = { ...reimbursement, status: 'Approved' }
+    let resolveApprove!: () => void
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse([reimbursement]))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveApprove = () => resolve(new Response(JSON.stringify(approved), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }))
+      .mockImplementationOnce(() => jsonResponse([approved]))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    await screen.findByText('employee-1')
+    const approveButton = screen.getByRole('button', { name: 'Approve' })
+    const rejectButton = screen.getByRole('button', { name: 'Reject' })
+
+    fireEvent.click(approveButton)
+    fireEvent.click(approveButton)
+
+    await waitFor(() => expect(approveButton).toBeDisabled())
+    expect(rejectButton).toBeDisabled()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    resolveApprove()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/approve'))).toHaveLength(1)
   })
 
   it('clears action errors when filters change', async () => {

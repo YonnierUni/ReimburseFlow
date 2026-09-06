@@ -100,7 +100,7 @@ public class ReimbursementTests
         var reimbursement = CreateReimbursement();
         reimbursement.Approve();
 
-        Assert.Throws<DomainException>(() => reimbursement.Approve());
+        Assert.Throws<InvalidStateTransitionException>(() => reimbursement.Approve());
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public class ReimbursementTests
         var reimbursement = CreateReimbursement();
         reimbursement.Reject("Missing receipt details.");
 
-        Assert.Throws<DomainException>(() => reimbursement.Approve());
+        Assert.Throws<InvalidStateTransitionException>(() => reimbursement.Approve());
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public class ReimbursementTests
         var reimbursement = CreateReimbursement();
         reimbursement.Approve();
 
-        Assert.Throws<DomainException>(() => reimbursement.Reject("Too late."));
+        Assert.Throws<InvalidStateTransitionException>(() => reimbursement.Reject("Too late."));
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public class ReimbursementTests
         var reimbursement = CreateReimbursement();
         reimbursement.Reject("Duplicate receipt.");
 
-        Assert.Throws<DomainException>(() => reimbursement.Reject("Another reason."));
+        Assert.Throws<InvalidStateTransitionException>(() => reimbursement.Reject("Another reason."));
     }
 
     private static Reimbursement CreateReimbursement(

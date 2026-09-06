@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { approveReimbursement, rejectReimbursement } from '../api/reimbursementsApi'
+import { useRef, useState } from 'react'
+import { ApiError, approveReimbursement, rejectReimbursement } from '../api/reimbursementsApi'
 import type { Reimbursement } from '../models/reimbursement'
 import { RejectReimbursementModal } from './RejectReimbursementModal'
 import { StatusBadge } from './StatusBadge'
@@ -17,33 +17,59 @@ const amountFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits
 export function ReimbursementTable({ items, onChanged, onActionStart, onActionSuccess, onError }: ReimbursementTableProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [rejectingId, setRejectingId] = useState<string | null>(null)
+  const activeRequestId = useRef<string | null>(null)
+  const actionInProgress = activeId !== null
 
-  async function approve(id: string) {
+  function beginAction(id: string) {
+    if (activeRequestId.current) return false
+    activeRequestId.current = id
     setActiveId(id)
     onActionStart()
+    return true
+  }
+
+  async function refreshAfterConflict(caught: unknown) {
+    if (caught instanceof ApiError && caught.status === 409) {
+      onError(caught.message)
+      await onChanged()
+      return true
+    }
+
+    return false
+  }
+
+  async function approve(id: string) {
+    if (!beginAction(id)) return
     try {
       await approveReimbursement(id)
       await onChanged()
       onActionSuccess()
     } catch (caught) {
-      onError(caught instanceof Error ? caught.message : 'Could not connect to the server.')
+      if (!(await refreshAfterConflict(caught))) {
+        onError(caught instanceof Error ? caught.message : 'Could not connect to the server.')
+      }
     } finally {
+      activeRequestId.current = null
       setActiveId(null)
     }
   }
 
   async function reject(reason: string) {
     if (!rejectingId) return
-    setActiveId(rejectingId)
-    onActionStart()
+    if (!beginAction(rejectingId)) return
     try {
       await rejectReimbursement(rejectingId, reason)
       setRejectingId(null)
       await onChanged()
       onActionSuccess()
     } catch (caught) {
-      onError(caught instanceof Error ? caught.message : 'Could not connect to the server.')
+      if (await refreshAfterConflict(caught)) {
+        setRejectingId(null)
+      } else {
+        onError(caught instanceof Error ? caught.message : 'Could not connect to the server.')
+      }
     } finally {
+      activeRequestId.current = null
       setActiveId(null)
     }
   }
@@ -68,8 +94,8 @@ export function ReimbursementTable({ items, onChanged, onActionStart, onActionSu
                 <td data-label="Actions">
                   {item.status === 'Pending' ? (
                     <div className="row-actions">
-                      <button className="approve-button" disabled={activeId === item.id} onClick={() => void approve(item.id)} type="button">Approve</button>
-                      <button className="reject-button" disabled={activeId === item.id} onClick={() => { onActionStart(); setRejectingId(item.id) }} type="button">Reject</button>
+                      <button className="approve-button" disabled={actionInProgress} onClick={() => void approve(item.id)} type="button">Approve</button>
+                      <button className="reject-button" disabled={actionInProgress} onClick={() => { if (!activeRequestId.current) { onActionStart(); setRejectingId(item.id) } }} type="button">Reject</button>
                     </div>
                   ) : <span className="muted">No actions</span>}
                 </td>

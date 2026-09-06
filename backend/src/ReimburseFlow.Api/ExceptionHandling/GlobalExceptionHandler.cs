@@ -15,6 +15,8 @@ public sealed class GlobalExceptionHandler(
     {
         var (statusCode, title) = exception switch
         {
+            InvalidStateTransitionException =>
+                (StatusCodes.Status409Conflict, "Conflict"),
             DomainException or ArgumentException =>
                 (StatusCodes.Status400BadRequest, "Bad Request"),
             NotFoundException =>
