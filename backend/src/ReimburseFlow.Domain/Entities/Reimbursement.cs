@@ -71,6 +71,8 @@ public sealed class Reimbursement
 
     public DateTime? UpdatedAt { get; private set; }
 
+    public byte[] RowVersion { get; private set; } = [];
+
     public void Approve()
     {
         EnsurePending();

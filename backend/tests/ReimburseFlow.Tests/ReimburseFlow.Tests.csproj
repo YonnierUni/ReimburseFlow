@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ReimburseFlow.Domain\ReimburseFlow.Domain.csproj" />
     <ProjectReference Include="..\..\src\ReimburseFlow.Application\ReimburseFlow.Application.csproj" />
+    <ProjectReference Include="..\..\src\ReimburseFlow.Infrastructure\ReimburseFlow.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
