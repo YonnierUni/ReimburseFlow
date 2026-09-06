@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using ReimburseFlow.Api.ExceptionHandling;
 using ReimburseFlow.Application;
 using ReimburseFlow.Infrastructure;
+using ReimburseFlow.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,6 +45,11 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
+{
+	await ApplyMigrationsAsync(app);
+}
+
 app.UseExceptionHandler();
 app.UseHttpsRedirection();
 app.UseCors("DevelopmentFrontend");
@@ -57,5 +64,35 @@ app.MapHealthChecks("/health");
 app.MapControllers();
 
 app.Run();
+
+static async Task ApplyMigrationsAsync(WebApplication app)
+{
+	const int maxAttempts = 10;
+
+	for (var attempt = 1; attempt <= maxAttempts; attempt++)
+	{
+		try
+		{
+			using var scope = app.Services.CreateScope();
+			var dbContext = scope.ServiceProvider.GetRequiredService<ReimburseFlowDbContext>();
+			await dbContext.Database.MigrateAsync();
+			app.Logger.LogInformation("Database migrations applied successfully.");
+			return;
+		}
+		catch (Exception exception) when (attempt < maxAttempts)
+		{
+			app.Logger.LogWarning(
+				exception,
+				"Database migration attempt {Attempt} of {MaxAttempts} failed. Retrying...",
+				attempt,
+				maxAttempts);
+			await Task.Delay(TimeSpan.FromSeconds(3));
+		}
+	}
+
+	using var finalScope = app.Services.CreateScope();
+	var finalDbContext = finalScope.ServiceProvider.GetRequiredService<ReimburseFlowDbContext>();
+	await finalDbContext.Database.MigrateAsync();
+}
 
 public partial class Program;
